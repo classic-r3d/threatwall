@@ -1,0 +1,17 @@
+# logs
+*.log
+server.log
+
+# dependencies (none — this project is zero-dep, but just in case)
+node_modules/
+bun.lockb
+
+# OS / editor / local tooling
+.DS_Store
+.vscode/
+.idea/
+.claude/
+
+# runtime user config & cache (regenerated automatically)
+config.json
+# yt-cache.json

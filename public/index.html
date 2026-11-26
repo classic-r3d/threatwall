@@ -1,0 +1,1425 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>root@threatwall:~# ./threatwall --live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0e17;
+    --bg2: #0d1220;
+    --panel: #111a2b;
+    --panel2: #0e1524;
+    --line: #1c2b44;
+    --green: #9fef00;      /* HTB signature */
+    --green-dim: #5c8a00;
+    --accent-rgb: 159, 239, 0;
+    --text: #c7d5e0;
+    --muted: #5b6b7f;
+    --red: #ff3e5f;
+    --amber: #ffb000;
+    --cyan: #2ee6d6;
+    --purple: #a978ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', ui-monospace, "SFMono-Regular", Menlo, monospace;
+    font-size: 13px; line-height: 1.4;
+    height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+  }
+  /* background grid + matrix canvas */
+  #matrix { position: fixed; inset: 0; z-index: 0; opacity: .42; pointer-events: none; }
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background-image: linear-gradient(rgba(var(--accent-rgb),.035) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(var(--accent-rgb),.035) 1px, transparent 1px);
+    background-size: 32px 32px;
+    mask-image: radial-gradient(circle at 50% 0%, #000 30%, transparent 80%);
+  }
+  /* scanlines */
+  body::after {
+    content: ""; position: fixed; inset: 0; z-index: 40; pointer-events: none;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.18) 3px);
+    opacity: .35; mix-blend-mode: multiply;
+  }
+  header, #wall, footer { position: relative; z-index: 2; }
+
+  header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 10px 18px; border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--bg2) 92%, transparent), color-mix(in srgb, var(--bg) 82%, transparent));
+  }
+  .prompt { font-weight: 800; font-size: 15px; white-space: nowrap; }
+  .prompt .u { color: var(--green); } .prompt .p { color: var(--cyan); }
+  .prompt .c { color: var(--text); } .prompt .cmd { color: var(--amber); }
+  .cursor { display:inline-block; width:9px; height:16px; background: var(--green); vertical-align:-2px; margin-left:2px; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .tag-title { color: var(--muted); font-size: 11px; margin-top:2px; letter-spacing:.5px; }
+  .hdr-right { margin-left:auto; display:flex; align-items:center; gap:16px; font-size:11px; }
+  .threat { display:flex; align-items:center; gap:7px; }
+  .threat b { color: var(--red); text-shadow: 0 0 8px rgba(255,62,95,.6); }
+  .bars { display:flex; gap:2px; }
+  .bars i { width:4px; height:12px; background:var(--line); display:inline-block; }
+  .bars i.on { background: var(--red); box-shadow:0 0 6px var(--red); }
+  .live { display:flex; align-items:center; gap:7px; color: var(--muted); }
+  .dot { width:8px; height:8px; border-radius:50%; background: var(--green); box-shadow:0 0 0 0 rgba(var(--accent-rgb),.6); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(var(--accent-rgb),.5)} 70%{box-shadow:0 0 0 9px rgba(var(--accent-rgb),0)} 100%{box-shadow:0 0 0 0 rgba(var(--accent-rgb),0)} }
+
+  /* ---- BENTO WALL: explicit areas tile the grid perfectly, zero gaps ---- */
+  #wall {
+    flex: 1; display: grid; gap: 2px; padding: 6px;
+    grid-template-columns: repeat(6, 1fr);
+    grid-template-rows: repeat(4, 1fr);
+    /* grid-template-areas is set at runtime — one of several randomized gap-free layouts */
+    min-height: 0;
+  }
+  .slot { min-height: 0; min-width: 0; }
+
+  .card {
+    position: relative; height: 100%; overflow: hidden; cursor: pointer;
+    background:
+      linear-gradient(160deg, color-mix(in srgb, var(--panel) 16%, transparent), color-mix(in srgb, var(--panel2) 16%, transparent));
+    /* no backdrop-filter — any blur smears the ambient canvas into a haze */
+    border: 1px solid var(--line); border-radius: 5px;
+    display: flex; flex-direction: column; gap: 6px; padding: 10px 12px;
+    transition: opacity .55s ease, transform .55s ease, border-color .18s, box-shadow .18s;
+    animation: cardin .5s ease;
+  }
+  @keyframes cardin { from{opacity:0; transform: translateY(6px)} to{opacity:1; transform:none} }
+  .card::before {
+    content: ""; position:absolute; left:0; top:0; bottom:0; width:2px; background: var(--green-dim); opacity:.5;
+  }
+  .card:hover { border-color: var(--green-dim); box-shadow: 0 0 0 1px rgba(var(--accent-rgb),.25), 0 8px 30px rgba(0,0,0,.4); transform: translateY(-2px); }
+  .card:hover::before { background: var(--green); opacity:1; box-shadow: 0 0 12px var(--green); }
+  .card.swap { opacity: 0; transform: scale(.97); }
+
+  .topbar { display:flex; align-items:center; gap:8px; font-size:10px; color: var(--muted);
+    padding-left: 24px; padding-right: 24px; } /* clear the always-visible ☆ (left) and ✕ (right) */
+  .topbar .sig { color: var(--green-dim); }
+  .src { color: color-mix(in srgb, var(--text) 68%, var(--muted)); font-weight:700; text-transform:uppercase; letter-spacing:.5px; }
+  .score { margin-left:auto; color: var(--green-dim); font-variant-numeric: tabular-nums; }
+  /* one title size for every card, on every tab; --fscale is the user's A− / A+ control */
+  .card h3 { font-size: calc(var(--card-title, 15px) * var(--fscale, 1)); }
+  h3 { font-weight: 700; line-height: 1.24; color: var(--text); overflow: hidden; display:-webkit-box; -webkit-box-orient: vertical; overflow-wrap: break-word; hyphens: auto; }
+  /* excerpt: a short 2-line teaser under the title (not a wall of text) */
+  .excerpt { color: var(--muted); font-size: calc(12.5px * var(--fscale, 1)); line-height: 1.45; overflow: hidden; display:-webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; flex: 0 0 auto; }
+  .tags { display:flex; gap:5px; flex-wrap:wrap; margin-top:auto; padding-top: 4px; }
+  .tag { font-size:9.5px; font-weight:800; padding:2px 6px; border-radius:3px; border:1px solid var(--line); color:var(--muted); letter-spacing:.5px; }
+  .tag.hot { color:var(--red); border-color:rgba(255,62,95,.45); background:rgba(255,62,95,.08); text-shadow:0 0 8px rgba(255,62,95,.4); }
+  .tag.CVE { color:var(--amber); border-color:rgba(255,176,0,.45); background:rgba(255,176,0,.08); }
+  .tag.AI  { color:var(--purple); border-color:rgba(169,120,255,.45); background:rgba(169,120,255,.08); }
+  .tag.offensive { color:var(--green); border-color:rgba(var(--accent-rgb),.35); background:rgba(var(--accent-rgb),.06); }
+
+  /* Card TITLES are one uniform size on every tile and every tab (see --card-title on .card h3).
+     Only the line clamp varies by tile — that governs how many lines fit the height, not the type size. */
+  .big h3  { -webkit-line-clamp: 4; }
+  .tall h3 { -webkit-line-clamp: 5; }
+  .wide h3 { -webkit-line-clamp: 3; }
+  .small h3 { -webkit-line-clamp: 3; }
+  .wide .excerpt { -webkit-line-clamp: 2; }
+  .small .excerpt, .card.social .excerpt { display:none; }
+  .small .topbar .rel { display:none; }
+
+  /* article / video lead image — a clean 16:9 banner at the top; title stays fully visible */
+  .thumb { flex: 0 0 auto; width: 100%; aspect-ratio: 16 / 9; max-height: 50%; background-size: cover; background-position: center; border-radius: 6px; border: 1px solid var(--line); }
+  .wide .thumb { max-height: 58%; }        /* short landscape tiles: give the image a bit more */
+  .card.hasthumb .excerpt { display: none; } /* image + title = a clean, uncut card */
+  /* on image cards the TITLE must be shown in full — never clamped. The image yields
+     space (shrinks) so the whole title fits. */
+  .card.hasthumb h3 { display: block; -webkit-line-clamp: unset; overflow: visible; flex: 0 0 auto; }
+  .card.hasthumb .thumb { flex: 0 1 auto; min-height: 0; }
+  .card.social .thumb { display: none; }
+  .card.hasthumb::before { background: var(--green-dim); }
+
+  /* ---- YouTube: horizontal rectangle cards (thumbnail + title, clear) ---- */
+  #wall.ytwall { gap: 12px; }
+  .card.yt { flex-direction: row; padding: 9px 11px; gap: 13px; align-items: center; }
+  .card.yt::before { display: none; }
+  /* thumbnail kept at YouTube's native 16:9 so it's never cropped */
+  .card.yt .yt-thumb { position: relative; flex: 0 0 46%; aspect-ratio: 16 / 9; background-size: cover; background-position: center; border-radius: 8px; border: 1px solid var(--line); }
+  .card.yt .yt-play { position:absolute; inset:0; margin:auto; width:42px; height:42px; display:flex; align-items:center; justify-content:center; font-size:15px; color:#fff; background:rgba(200,0,0,.9); border-radius:50%; box-shadow:0 2px 10px rgba(0,0,0,.5); }
+  .card.yt .yt-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 7px; justify-content: center; }
+  .card.yt .yt-body h3 { -webkit-line-clamp: 3; line-height: 1.3; }   /* size comes from .card h3 */
+  .card.yt .topbar { font-size: 11px; }
+
+  /* tweet / social card */
+  .card.social { background: linear-gradient(160deg, color-mix(in srgb, var(--panel) 22%, transparent), color-mix(in srgb, var(--panel2) 22%, transparent)); }
+  .emptywall { grid-column:1/-1; grid-row:1/-1; display:flex; align-items:center; justify-content:center; color:var(--muted); opacity:.5; font-size:13px; letter-spacing:1px; }
+  .card.social::before { background: var(--cyan); }
+  .tweet-head { display:flex; align-items:center; gap:8px; padding-left: 24px; padding-right: 24px; }
+  .avatar { width:28px; height:28px; border-radius:50%; background: linear-gradient(135deg, var(--cyan), #0a6b7a); display:flex; align-items:center; justify-content:center; font-weight:800; color:#04140f; font-size:13px; flex:0 0 auto; }
+  .handle { color: var(--muted); font-size:11px; }
+  /* sits next to the handle (not the far right) so it can't collide with the ✕ control */
+  .xlogo { color: var(--text); font-weight:900; }
+  .placeholder { color: var(--green-dim); font-size:11px; display:flex; align-items:center; height:100%; justify-content:center; opacity:.6; }
+
+  /* modal */
+  #overlay { position: fixed; inset:0; z-index:60; background: rgba(3,6,11,.8); backdrop-filter: blur(4px); display:none; align-items:center; justify-content:center; animation: cardin .18s; }
+  #overlay.open { display:flex; }
+  .modal { width:min(680px,92vw); max-height:86vh; overflow:auto; background: var(--panel); border:1px solid var(--green-dim); border-radius:10px; box-shadow: 0 0 0 1px rgba(var(--accent-rgb),.2), 0 20px 60px rgba(0,0,0,.6); padding: 22px 26px; }
+  .modal .bar { font-size:11px; color: var(--green-dim); margin-bottom:12px; }
+  .modal .meta { font-size:11px; color: var(--muted); margin-bottom:10px; }
+  .modal h2 { font-size:21px; line-height:1.3; margin-bottom:12px; }
+  .modal p { color:#b3c2d1; margin-bottom:18px; white-space:pre-wrap; font-size:12.5px; }
+  .modal a.open { display:inline-block; background: var(--green); color:#0a0a0a; font-weight:800; padding:9px 16px; border-radius:6px; text-decoration:none; letter-spacing:.5px; }
+  .modal a.open:hover { box-shadow: 0 0 16px rgba(var(--accent-rgb),.6); }
+  .modal .close { float:right; cursor:pointer; color: var(--muted); font-size:20px; border:none; background:none; }
+
+  footer { display:flex; gap:18px; align-items:center; padding: 6px 18px; border-top:1px solid var(--line); color: var(--muted); font-size:11px; background: color-mix(in srgb, var(--bg) 90%, transparent); }
+  footer .k { color: var(--green-dim); }
+  footer .stat b { color: var(--green); }
+  #srcline { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; flex:1; }
+  #toast { position: fixed; bottom: 40px; left:50%; transform: translateX(-50%) translateY(20px); z-index:80; background: color-mix(in srgb, var(--green) 16%, #000); color: var(--green); border:1px solid var(--green); padding:10px 22px; border-radius:6px; font-weight:800; letter-spacing:1px; opacity:0; transition: all .4s; box-shadow:0 0 24px rgba(var(--accent-rgb),.5); }
+  #toast.show { opacity:1; transform: translateX(-50%) translateY(0); }
+
+  /* ---- filter + control bar ---- */
+  #bar { display:flex; align-items:center; gap:8px; padding:7px 14px; border-bottom:1px solid var(--line); background: color-mix(in srgb, var(--bg2) 85%, transparent); position:relative; z-index:3; overflow:visible; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; flex:1; }
+  .chip { cursor:pointer; font-size:11px; padding:3px 10px; border:1px solid var(--line); border-radius:4px; color:var(--muted); white-space:nowrap; transition: all .15s; user-select:none; }
+  .chip:hover { border-color: var(--green-dim); color: var(--text); }
+  .chip.active { background: var(--green); color:#0a0a0a; border-color: var(--green); font-weight:800; box-shadow:0 0 12px rgba(var(--accent-rgb),.35); }
+  .chip .n { opacity:.6; margin-left:4px; }
+  .ctrl { position:relative; }
+  .btn { cursor:pointer; font-size:11px; padding:4px 10px; border:1px solid var(--line); border-radius:4px; color:var(--text); background:var(--panel); white-space:nowrap; }
+  .btn:hover { border-color: var(--green-dim); }
+  .swatches { display:flex; gap:6px; align-items:center; }
+  .sw { width:16px; height:16px; border-radius:50%; cursor:pointer; border:2px solid transparent; transition: transform .12s; }
+  .sw:hover { transform: scale(1.2); }
+  .sw.active { border-color:#fff; box-shadow:0 0 8px currentColor; }
+  /* design themes (full redesigns) — slightly larger, with a faint ring to set them apart */
+  .sw.design { width:19px; height:19px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.22); }
+  .sw.design.active { box-shadow: inset 0 0 0 1px rgba(255,255,255,.35), 0 0 10px currentColor; }
+  /* divider between the design themes and the plain colour palettes */
+  .sw.design + .sw:not(.design) { margin-left:9px; position:relative; }
+  .sw.design + .sw:not(.design)::before { content:""; position:absolute; left:-6px; top:-2px;
+    height:18px; width:1px; background:var(--line); }
+
+  /* ============ DESIGN THEMES — full redesigns ============ */
+  #fx { position:fixed; inset:0; z-index:1; pointer-events:none; }
+
+  /* ---- ⌁ CYBORG · HUD optics: cut corners, glitch type, scan sweeps ---- */
+  body[data-design="cyborg"] .card { border-radius:0;
+    clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px));
+    background: linear-gradient(160deg, color-mix(in srgb, var(--panel) 20%, transparent), color-mix(in srgb, var(--panel2) 20%, transparent)); }
+  body[data-design="cyborg"] .card::before { width:100%; height:2px; bottom:auto;
+    background: linear-gradient(90deg, var(--green), #ff2f9e); opacity:.55; }
+  body[data-design="cyborg"] .card:hover::before { opacity:1; box-shadow:0 0 14px var(--green); }
+  body[data-design="cyborg"] .card:hover h3 { animation: glitch .28s steps(2) 2;
+    text-shadow: 1.5px 0 #ff2f9e, -1.5px 0 var(--green); }
+  @keyframes glitch { 25%{transform:translateX(1.5px)} 50%{transform:translateX(-1.5px)} 75%{transform:translateX(1px) skewX(1.5deg)} }
+  body[data-design="cyborg"] h3 { text-transform:uppercase; letter-spacing:.4px; }
+  body[data-design="cyborg"] .chip, body[data-design="cyborg"] .tag { border-radius:0; }
+  body[data-design="cyborg"] .chip { clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px); }
+  body[data-design="cyborg"] header { position:relative; overflow:hidden;
+    border-bottom:1px solid color-mix(in srgb, var(--green) 45%, transparent); }
+  body[data-design="cyborg"] header::after { content:""; position:absolute; top:0; bottom:0; left:-45%; width:45%;
+    background: linear-gradient(90deg, transparent, rgba(var(--accent-rgb),.12), transparent);
+    animation: hudsweep 5s linear infinite; }
+  @keyframes hudsweep { to { left:145%; } }
+  body[data-design="cyborg"] #fx { background: repeating-linear-gradient(90deg, transparent 0 130px, rgba(var(--accent-rgb),.025) 130px 131px); }
+  body[data-design="cyborg"] #fx::after { content:""; position:absolute; left:0; right:0; top:-140px; height:120px;
+    background: linear-gradient(180deg, transparent, rgba(var(--accent-rgb),.07), transparent);
+    animation: scandown 8s linear infinite; }
+  @keyframes scandown { to { top:110%; } }
+  body[data-design="cyborg"] footer { border-top:1px solid color-mix(in srgb, var(--green) 40%, transparent); }
+
+  /* ---- ▓ GHOST · stealth-ops dossier: graphite mono, radar scope, declassify wipes ---- */
+  body[data-design="ghost"]::before { display:none; }               /* clean dark — no accent grid */
+  body[data-design="ghost"]::after { opacity:.22; }
+  body[data-design="ghost"] #fx { background: radial-gradient(ellipse at 50% 55%, transparent 50%, rgba(0,0,0,.66) 100%); }
+  body[data-design="ghost"] .card { border-radius:0; border:1px solid var(--line);
+    background: linear-gradient(180deg, rgba(18,22,26,.28), rgba(14,17,20,.28)); }
+  body[data-design="ghost"] .card::before { width:100%; height:3px; bottom:auto; opacity:.35;
+    background: repeating-linear-gradient(-45deg, var(--green) 0 6px, transparent 6px 12px); } /* hazard strip */
+  body[data-design="ghost"] .card:hover::before { opacity:.9; }
+  body[data-design="ghost"] .card:hover { transform:none; border-color:#3a444d;
+    box-shadow: inset 0 0 0 1px rgba(255,59,63,.14), 0 10px 30px rgba(0,0,0,.5); }
+  body[data-design="ghost"] .topbar { text-transform:uppercase; letter-spacing:.8px; }
+  body[data-design="ghost"] .topbar .sig { display:none; }
+  body[data-design="ghost"] .topbar .src::before { content:"FILE // "; color:var(--muted); font-weight:400; }
+  body[data-design="ghost"] h3 { position:relative; letter-spacing:.2px; }
+  /* declassify: a redaction bar wipes off the title when you inspect the card */
+  body[data-design="ghost"] .card:hover h3::after { content:""; position:absolute; inset:-1px -2px;
+    background:#0c0e10; transform-origin:right; animation: unredact .5s steps(9) forwards; }
+  @keyframes unredact { from{ transform:scaleX(1);} to{ transform:scaleX(0);} }
+  body[data-design="ghost"] .chip, body[data-design="ghost"] .tag { border-radius:0; text-transform:uppercase; }
+  body[data-design="ghost"] .chip.active { background:var(--green); border-color:var(--green); color:#fff; }
+  body[data-design="ghost"] header { border-bottom:1px double #2a3138; }
+  body[data-design="ghost"] footer { border-top:1px double #2a3138; }
+  body[data-design="ghost"] .prompt .cmd { color:var(--green); }
+
+  /* ---- ▽ OUTRUN · synthwave horizon: neon grid, retro sun, chrome nights ---- */
+  body[data-design="outrun"]::before { display:none; }        /* the grid IS the background */
+  body[data-design="outrun"]::after { opacity:.14; }
+  /* ---- ◍ ONION · deep-web underground: layered cards, relay hops, toxic-green signal ---- */
+  body[data-design="onion"]::before { display:none; }
+  body[data-design="onion"]::after { opacity:.3; }        /* heavier scanlines — grimy terminal */
+  body[data-design="onion"] #fx { background:
+      radial-gradient(ellipse at 50% 45%, transparent 42%, rgba(0,0,0,.78) 100%),
+      repeating-linear-gradient(90deg, transparent 0 3px, rgba(168,110,221,.018) 3px 4px); }
+  body[data-design="onion"] .card { border-radius:0; border:1px solid var(--line);
+    background: linear-gradient(180deg, rgba(16,10,24,.34), rgba(10,6,17,.34)); }
+  /* the left border is the onion: concentric layers, outermost dim → core bright green */
+  body[data-design="onion"] .card::before { width:5px; opacity:.75;
+    background: linear-gradient(90deg, #2a1c3d 0 1px, #5b3286 1px 2px, #a86edd 2px 4px, #33f0a5 4px 5px); }
+  body[data-design="onion"] .card:hover::before { opacity:1; box-shadow:0 0 12px rgba(51,240,165,.55); }
+  body[data-design="onion"] .card:hover { transform:none; border-color:#4a3168;
+    box-shadow: inset 0 0 0 1px rgba(51,240,165,.10), 0 8px 28px rgba(0,0,0,.6); }
+  body[data-design="onion"] .topbar { text-transform:uppercase; letter-spacing:.7px; }
+  body[data-design="onion"] .topbar .sig { color:#33f0a5; }
+  body[data-design="onion"] .topbar .sig::after { content:" ⇢⇢⇢"; color:var(--green-dim); letter-spacing:-1px; }
+  body[data-design="onion"] .topbar .src { color:var(--green); }
+  body[data-design="onion"] h3 { letter-spacing:.2px; }
+  body[data-design="onion"] .card:hover h3 { color:#e9ffef; text-shadow:0 0 16px rgba(51,240,165,.3); }
+  body[data-design="onion"] .chip, body[data-design="onion"] .tag { border-radius:0; }
+  body[data-design="onion"] .chip.active { background:var(--green); color:#0a0611;
+    box-shadow:0 0 14px rgba(var(--accent-rgb),.55); }
+  body[data-design="onion"] header { border-bottom:1px solid var(--green-dim); }
+  body[data-design="onion"] footer { border-top:1px solid var(--green-dim); }
+  body[data-design="onion"] .prompt .u { color:#33f0a5; text-shadow:0 0 14px rgba(51,240,165,.6); }
+  body[data-design="onion"] .prompt .cmd { color:var(--green); }
+  body[data-design="onion"] #matrix { opacity:.7; }
+
+  /* ambient wash only — the aurora ribbons themselves are drawn on the canvas */
+  body[data-design="outrun"] #fx { background:
+      radial-gradient(80% 55% at 22% 12%, rgba(255,60,170,.10), transparent 70%),
+      radial-gradient(75% 55% at 82% 88%, rgba(0,229,255,.09), transparent 70%); }
+  body[data-design="outrun"] #matrix { opacity: .8; }   /* let the ribbons glow */
+  body[data-design="outrun"] #wall { gap:7px; padding:9px; }
+  /* chrome-night glass: violet tint, magenta top-glint, cyan underglow on hover */
+  body[data-design="outrun"] .card { border-radius:4px; border:1px solid rgba(255,60,170,.22);
+    background: linear-gradient(170deg, rgba(38,12,72,.30), rgba(14,6,32,.32));
+    box-shadow: inset 0 1px 0 rgba(255,150,220,.10); }
+  body[data-design="outrun"] .card::before { width:100%; height:2px; bottom:auto; opacity:.85;
+    background: linear-gradient(90deg, #00e5ff, #ff3caa, #ffcc44); }
+  body[data-design="outrun"] .card:hover { transform: translateY(-2px); border-color: rgba(0,229,255,.5);
+    box-shadow: inset 0 1px 0 rgba(255,150,220,.16), 0 10px 34px rgba(255,60,170,.22), 0 0 22px rgba(0,229,255,.14); }
+  body[data-design="outrun"] h3 { letter-spacing:.4px;
+    text-shadow: 0 0 14px rgba(255,60,170,.35), 0 1px 0 rgba(0,229,255,.18); }
+  body[data-design="outrun"] .topbar .src { color:#00e5ff; letter-spacing:.7px; text-transform:uppercase; }
+  /* neon-tube tabs */
+  body[data-design="outrun"] .chip { border-radius:2px; border-color:rgba(255,60,170,.28); }
+  body[data-design="outrun"] .chip:hover { border-color:#00e5ff; color:#00e5ff; }
+  body[data-design="outrun"] .chip.active { background:linear-gradient(90deg,#ff3caa,#ff6ec7); color:#12042a;
+    border-color:#ff3caa; box-shadow:0 0 16px rgba(255,60,170,.6); }
+  body[data-design="outrun"] .tag { border-radius:2px; }
+  body[data-design="outrun"] header { border-bottom:1px solid rgba(255,60,170,.3);
+    box-shadow: 0 1px 18px -6px rgba(255,60,170,.5); }
+  body[data-design="outrun"] footer { border-top:1px solid rgba(255,60,170,.3); }
+  body[data-design="outrun"] .prompt .u { color:#ff3caa; text-shadow:0 0 16px rgba(255,60,170,.9); }
+  body[data-design="outrun"] .prompt .cmd { color:#00e5ff; text-shadow:0 0 12px rgba(0,229,255,.6); }
+  .menu { position:absolute; right:0; top:34px; background:var(--panel); border:1px solid var(--green-dim); border-radius:6px; padding:6px; min-width:190px; display:none; z-index:70; box-shadow:0 12px 40px rgba(0,0,0,.6); }
+  .menu.open { display:block; }
+  .menu a { display:flex; justify-content:space-between; gap:10px; padding:7px 10px; color:var(--text); text-decoration:none; font-size:12px; border-radius:4px; }
+  .menu a:hover { background: rgba(var(--accent-rgb),.1); color: var(--green); }
+  .menu a .tag2 { color: var(--muted); font-size:10px; }
+  .menu .hd { font-size:10px; color: var(--green-dim); padding:4px 10px 6px; letter-spacing:.5px; }
+  /* font-size control */
+  .fontctrl { display: flex; gap: 3px; align-items: center; }
+  .fbtn { cursor: pointer; background: var(--panel); border: 1px solid var(--line); color: var(--muted); border-radius: 4px;
+    padding: 2px 6px; font: inherit; font-size: 11px; font-weight: 800; line-height: 1.3; }
+  .fbtn:hover { border-color: var(--green-dim); color: var(--green); }
+
+  /* ===== Resource Control panel ===== */
+  #manageBtn { border-color: var(--green-dim); color: var(--green); }
+  #savedBtn { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, var(--line)); }
+  #savedBtn .n { opacity: .7; margin-left: 2px; }
+  #savedBtn.on { background: rgba(255,176,0,.16); border-color: var(--amber); }
+  #panelScrim { position: fixed; inset: 0; z-index: 90; background: rgba(3,6,11,.55); backdrop-filter: blur(2px); display: none; }
+  #panelScrim.open { display: block; }
+  #panel { position: fixed; top: 0; right: 0; height: 100vh; width: min(440px, 94vw); z-index: 91;
+    background: color-mix(in srgb, var(--bg2) 92%, transparent); backdrop-filter: blur(10px);
+    border-left: 1px solid var(--green-dim); box-shadow: -18px 0 50px rgba(0,0,0,.55);
+    transform: translateX(102%); transition: transform .28s ease; display: flex; flex-direction: column; }
+  #panel.open { transform: translateX(0); }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .pclose { background: none; border: none; color: var(--muted); font-size: 24px; cursor: pointer; line-height: 1; }
+  .pclose:hover { color: var(--green); }
+  .panel-body { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 14px; }
+  .pcard { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: color-mix(in srgb, var(--panel) 55%, transparent); }
+  .ph { font-size: 12px; font-weight: 800; color: var(--green); letter-spacing: .5px; margin-bottom: 10px; }
+  /* menu-first navigation */
+  #panelMenu { display: flex; flex-direction: column; gap: 8px; }
+  .menu-item { display: flex; align-items: center; justify-content: space-between; width: 100%; text-align: left;
+    cursor: pointer; background: color-mix(in srgb, var(--panel) 55%, transparent); border: 1px solid var(--line);
+    color: var(--text); border-radius: 8px; padding: 13px 14px; font: inherit; font-size: 13px; font-weight: 700; }
+  .menu-item:hover { border-color: var(--green-dim); color: var(--green); }
+  .menu-item .chev { color: var(--muted); font-size: 16px; }
+  .pview { display: none; flex-direction: column; gap: 8px; }
+  .pview.active { display: flex; }
+  .pview-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  .pview-head span { font-size: 12px; font-weight: 800; color: var(--green); letter-spacing: .5px; }
+  .pback { cursor: pointer; background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 6px;
+    padding: 4px 9px; font: inherit; font-size: 11px; font-weight: 700; }
+  .pback:hover { border-color: var(--green-dim); color: var(--green); }
+  .pbtn.danger { background: transparent; border-color: var(--red); color: var(--red); }
+  .pbtn.danger:hover { background: var(--red); color: #0a0a0a; box-shadow: none; }
+  .pbtn.full { width: 100%; margin-top: 9px; }
+  /* the tab selector that scopes everything under it */
+  .sel-card { border-color: var(--green-dim); }
+  .plabel { display:block; font-size: 10px; font-weight: 800; letter-spacing: .7px; text-transform: uppercase;
+    color: var(--green); margin-bottom: 6px; }
+  .pcount { display:inline-block; min-width: 17px; text-align:center; margin-left: 6px; padding: 0 5px;
+    font-size: 10px; font-weight: 800; color: var(--bg); background: var(--green-dim); border-radius: 9px; }
+  .zone-danger { border-color: color-mix(in srgb, var(--red) 42%, var(--line)); }
+  .ph.danger { color: var(--red); }
+  /* unsaved-change cue on the footer button */
+  .pbtn.needs-save { animation: needsave 1.7s ease-in-out infinite; }
+  @keyframes needsave { 50% { box-shadow: 0 0 0 3px rgba(var(--accent-rgb),.28); } }
+  .confirm-box { border: 1px solid var(--red); border-radius: 8px; padding: 12px; margin-top: 6px;
+    background: color-mix(in srgb, var(--red) 12%, transparent); font-size: 12.5px; }
+  .prow { display: flex; gap: 8px; margin-bottom: 8px; }
+  .pinput { width: 100%; background: var(--bg); border: 1px solid var(--line); color: var(--text); border-radius: 6px;
+    padding: 8px 10px; font: inherit; font-size: 12.5px; margin-bottom: 8px; }
+  .pinput:focus { outline: none; border-color: var(--green-dim); }
+  select.pinput { cursor: pointer; }
+  textarea.pinput { resize: vertical; }
+  .pbtn { white-space: nowrap; cursor: pointer; background: var(--panel); border: 1px solid var(--line); color: var(--text);
+    border-radius: 6px; padding: 8px 12px; font: inherit; font-size: 12px; font-weight: 700; }
+  .pbtn:hover { border-color: var(--green-dim); color: var(--green); }
+  .pbtn.primary { background: var(--green); color: #0a0a0a; border-color: var(--green); }
+  .pbtn.primary:hover { box-shadow: 0 0 14px rgba(var(--accent-rgb),.5); color: #0a0a0a; }
+  .pbtn.ghost { background: transparent; }
+  .reslist { display: flex; flex-direction: column; gap: 4px; max-height: 230px; overflow-y: auto; }
+  .resrow { display: flex; align-items: center; gap: 9px; padding: 6px 4px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+  .resrow:last-child { border-bottom: none; }
+  .resrow input[type=checkbox] { accent-color: var(--green); width: 15px; height: 15px; cursor: pointer; flex: 0 0 auto; }
+  .resrow .rname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); text-decoration: none; }
+  a.rname:hover { color: var(--green); text-decoration: underline; }
+  .resrow .rcount { color: var(--muted); font-size: 10.5px; }
+  .resrow .rdel { cursor: pointer; color: var(--muted); border: none; background: none; font-size: 14px; padding: 0 4px; }
+  .resrow .rdel:hover { color: var(--red); }
+  .resrow .rcustom { color: var(--green); font-size: 9px; border: 1px solid var(--green-dim); border-radius: 3px; padding: 0 4px; }
+  .verify-out { font-size: 12px; margin-top: 4px; }
+  .verify-out.ok { color: var(--green); }
+  .verify-out.bad { color: var(--red); }
+  .verify-out .vt { color: var(--muted); display: block; margin: 3px 0 0 12px; }
+  .chiplist { display: flex; flex-wrap: wrap; gap: 6px; }
+  .mchip { display: inline-flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 3px 8px; font-size: 11px; }
+  .mchip button { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; line-height: 1; }
+  .mchip button:hover { color: var(--red); }
+  .mchip .pinlink { color: var(--text); text-decoration: none; }
+  .mchip .pinlink:hover { color: var(--green); text-decoration: underline; }
+  .phint { color: var(--muted); font-size: 11px; }
+  .panel-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--line); }
+  /* pin control on cards */
+  /* card control cluster (save / pin / dismiss) */
+  .cardctl { position: absolute; z-index: 3; display: flex; gap: 3px; opacity: 0; transition: opacity .15s; }
+  .cardctl.left { top: 5px; left: 5px; opacity: .8; }     /* save ☆ always visible */
+  .cardctl.right { top: 5px; right: 5px; opacity: .8; }   /* quick-remove ✕ always visible */
+  .cardctl.botright { bottom: 5px; right: 5px; }
+  .card:hover .cardctl { opacity: 1; }
+  .cbtn { cursor: pointer; border: none; background: rgba(0,0,0,.45); color: var(--muted); border-radius: 5px;
+    font-size: 12px; line-height: 1; padding: 3px 5px; }
+  .cbtn:hover { color: var(--green); background: rgba(var(--accent-rgb),.2); }
+  .cbtn.on { opacity: 1; color: var(--green); background: rgba(var(--accent-rgb),.18); }
+  .card:has(.cbtn.on) .cardctl { opacity: 1; }               /* keep visible if saved/pinned */
+  .cbtn.dismiss:hover { color: var(--red); background: rgba(255,62,95,.2); }
+  .savedchip.active, .chip.savedchip { color: var(--amber); }
+</style>
+</head>
+<body>
+  <canvas id="matrix"></canvas>
+  <div id="fx"></div><!-- per-design ambient overlay: HUD scan / CRT vignette / nebula -->
+
+  <header>
+    <div>
+      <div class="prompt"><span class="u">root@threatwall</span><span class="c">:</span><span class="p">~</span><span class="c">#</span> <span class="cmd">./threatwall</span> <span class="c">--live</span><span class="cursor"></span></div>
+      <div class="tag-title">// offensive-sec · exploit · ai-security signal wall &nbsp;—&nbsp; <span id="statusword">scanning feeds</span></div>
+    </div>
+    <div class="hdr-right">
+      <div class="threat">THREAT <div class="bars" id="bars"><i></i><i></i><i></i><i></i><i></i></div><b id="threatlvl">—</b></div>
+      <div class="live"><span class="dot"></span><span id="status">booting…</span></div>
+    </div>
+  </header>
+
+  <nav id="bar">
+    <div class="chips" id="chips"></div>
+    <div class="ctrl">
+      <span class="btn" id="savedBtn" title="Saved news">★ saved <span class="n" id="savedN">0</span></span>
+      <span class="btn" id="manageBtn" title="Manage resources & tabs">⚙ manage</span>
+      <span class="btn" id="resBtn">▚ resources ▾</span>
+      <div class="menu" id="resMenu">
+        <div class="hd">// LIVE FEEDS</div>
+        <a href="https://0xdf.gitlab.io/" target="_blank" rel="noopener">0xdf · HTB Writeups <span class="tag2">Writeups</span></a>
+        <a href="https://github.com/topics/hacking-tool" target="_blank" rel="noopener">GitHub · Security Tools <span class="tag2">Tools</span></a>
+        <a href="https://darknetdiaries.com/episode/" target="_blank" rel="noopener">Darknet Diaries <span class="tag2">Podcast</span></a>
+        <div class="hd">// SOCIAL</div>
+        <a href="https://www.linkedin.com/search/results/content/?keywords=cybersecurity%20OR%20offensive%20security&sortBy=%22date_posted%22" target="_blank" rel="noopener">LinkedIn · Security <span class="tag2">Social</span></a>
+        <a href="https://www.linkedin.com/news/topic/cybersecurity/" target="_blank" rel="noopener">LinkedIn Cyber News <span class="tag2">Social</span></a>
+        <div class="hd">// X / SECURITY TWITTER</div>
+        <a href="https://x.com/vxunderground" target="_blank" rel="noopener">@vxunderground <span class="tag2">Malware</span></a>
+        <a href="https://x.com/taviso" target="_blank" rel="noopener">@taviso <span class="tag2">OffSec</span></a>
+        <a href="https://x.com/briankrebs" target="_blank" rel="noopener">@briankrebs <span class="tag2">News</span></a>
+        <a href="https://x.com/NahamSec" target="_blank" rel="noopener">@NahamSec <span class="tag2">Bounty</span></a>
+        <a href="https://x.com/simonw" target="_blank" rel="noopener">@simonw <span class="tag2">AI</span></a>
+        <div class="hd">// PLATFORMS</div>
+        <a href="https://hackerone.com/hacktivity" target="_blank" rel="noopener">HackerOne Hacktivity <span class="tag2">Bounty</span></a>
+        <a href="https://bugcrowd.com/crowdstream" target="_blank" rel="noopener">Bugcrowd Crowdstream <span class="tag2">Bounty</span></a>
+        <a href="https://www.hackthebox.com/" target="_blank" rel="noopener">Hack The Box <span class="tag2">Labs</span></a>
+        <a href="https://www.hackers-arise.com/" target="_blank" rel="noopener">Hackers Arise <span class="tag2">Training</span></a>
+      </div>
+    </div>
+    <div class="fontctrl" title="Font size">
+      <button class="fbtn" onclick="setFont(-1)">A−</button>
+      <button class="fbtn" onclick="setFont(1)">A+</button>
+    </div>
+    <div class="swatches" id="swatches" title="switch theme"></div>
+  </nav>
+
+  <main id="wall"></main>
+
+  <footer>
+    <span class="stat">THREATS <b id="s-total">0</b></span>
+    <span class="stat">0DAYS <b id="s-hot">0</b></span>
+    <span class="stat">CVE <b id="s-cve">0</b></span>
+    <span class="stat">AI <b id="s-ai">0</b></span>
+    <span id="srcline"><span class="k">src:</span> —</span>
+    <span><span class="k">sync:</span> <span id="updated">—</span></span>
+  </footer>
+
+  <div id="overlay" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal"></div></div>
+  <div id="toast"></div>
+
+  <!-- ===== Resource Control panel ===== -->
+  <div id="panelScrim" onclick="if(event.target===this)closePanel()"></div>
+  <aside id="panel">
+    <div class="panel-head">
+      <div class="prompt"><span class="u">root@threatwall</span><span class="c">:</span><span class="cmd">~/manage</span></div>
+      <button class="pclose" onclick="closePanel()">×</button>
+    </div>
+    <div class="panel-body">
+
+      <!-- STEP 1: choose a setting -->
+      <div id="panelMenu">
+        <div class="phint" style="margin-bottom:8px">Choose a setting to change:</div>
+        <button class="menu-item" onclick="showPanelView('tabmgmt')"><span>🗂 Tab management</span><span class="chev">›</span></button>
+        <button class="menu-item" onclick="showPanelView('add')"><span>＋ Add a resource</span><span class="chev">›</span></button>
+        <button class="menu-item" onclick="showPanelView('pins')"><span>📌 Pinned boxes</span><span class="chev">›</span></button>
+      </div>
+
+      <!-- STEP 2: the chosen setting's parameters -->
+      <div class="pview" data-view="add">
+        <div class="pview-head"><button class="pback" onclick="showPanelMenu()">‹ back</button><span>Add a resource</span></div>
+        <div class="prow"><input id="pAddInput" class="pinput" placeholder="URL, @handle, r/sub, or YouTube channel id" /><button class="pbtn" onclick="verifyResource()">Verify</button></div>
+        <label class="phint">Attach to tab:</label>
+        <select id="pAddTab" class="pinput"></select>
+        <div id="pVerifyOut" class="verify-out"></div>
+      </div>
+
+      <div class="pview" data-view="tabmgmt">
+        <div class="pview-head"><button class="pback" onclick="showPanelMenu()">‹ back</button><span>Tab management</span></div>
+
+        <!-- ONE tab selector drives everything below it, so there's only ever one "which tab?" -->
+        <div class="pcard sel-card">
+          <label class="plabel" for="pTab">Working on tab</label>
+          <select id="pTab" class="pinput" style="margin-bottom:0"></select>
+        </div>
+
+        <div class="pcard">
+          <div class="ph">Resources feeding this tab <span id="pResCount" class="pcount"></span></div>
+          <div id="pResList" class="reslist"></div>
+          <button class="pbtn ghost full" onclick="addResourceToCurrentTab()">＋ Add a resource to this tab</button>
+        </div>
+
+        <div class="pcard zone-danger">
+          <div class="ph danger">Danger zone</div>
+          <div id="pRemoveAction"></div>
+        </div>
+
+        <div class="pcard">
+          <div class="ph">Create a new tab</div>
+          <input id="pNewTabName" class="pinput" placeholder="Tab name (e.g. Threat Intel)" />
+          <textarea id="pNewTabDesc" class="pinput" rows="2" placeholder="What belongs here? (used for keyword matching)"></textarea>
+          <div class="prow" style="margin-bottom:0">
+            <button class="pbtn" onclick="createTab(false)">Create</button>
+            <button class="pbtn ghost" onclick="createTab(true)">Create + auto-populate</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="pview" data-view="pins">
+        <div class="pview-head"><button class="pback" onclick="showPanelMenu()">‹ back</button><span>Pinned boxes</span></div>
+        <div id="pPinList" class="chiplist"></div>
+        <div class="phint">Click 📌 on any box to keep it on the wall until you unpin it.</div>
+      </div>
+
+    </div>
+    <div class="panel-foot">
+      <span id="pStatus" class="phint"></span>
+      <button class="pbtn primary" id="pSaveBtn" onclick="savePanel()">Save &amp; apply</button>
+    </div>
+  </aside>
+
+<script>
+// ---- randomized bento layouts ----
+// Each layout tiles the 6x4 grid perfectly (zero gaps) but scatters the big/wide/tall/small
+// tiles into non-ordered positions. One is chosen at random per load, so sizes are never a
+// neat large->small staircase. All hand-verified to cover all 24 cells with no overlap.
+// Gap-free layouts of varying tile counts. The wall picks the fullest layout whose slot
+// count fits the number of results — so tiles resize to fill the space and there are NEVER
+// placeholder boxes. Zero results => empty page (handled in renderWall).
+const LAYOUTS = [
+  // ---- full views (6x4) ----
+  { n:10, cols:6, rows:4, areas: `"A A B B C D" "A A B B E E" "F F G H H I" "J J G H H I"`,
+    slots: [ {area:"A",size:"big"},{area:"B",size:"big"},{area:"C",size:"small"},{area:"D",size:"small"},
+             {area:"E",size:"wide"},{area:"F",size:"wide"},{area:"G",size:"tall"},{area:"H",size:"big"},
+             {area:"I",size:"tall"},{area:"J",size:"wide"} ] },
+  { n:10, cols:6, rows:4, areas: `"A B B C C D" "A E E F F D" "G E E F F H" "G I I J J H"`,
+    slots: [ {area:"A",size:"tall"},{area:"B",size:"wide"},{area:"C",size:"wide"},{area:"D",size:"tall"},
+             {area:"E",size:"big"},{area:"F",size:"big"},{area:"G",size:"tall"},{area:"H",size:"tall"},
+             {area:"I",size:"wide"},{area:"J",size:"wide"} ] },
+  { n:9, cols:6, rows:4, areas: `"A A B C C D" "A A B E E D" "F G G E E H" "F G G I I H"`,
+    slots: [ {area:"A",size:"big"},{area:"B",size:"tall"},{area:"C",size:"wide"},{area:"D",size:"tall"},
+             {area:"E",size:"big"},{area:"F",size:"tall"},{area:"G",size:"big"},{area:"H",size:"tall"},
+             {area:"I",size:"wide"} ] },
+  { n:8, cols:6, rows:4, areas: `"A A A B C C" "D D E B C C" "D D E F F G" "H H E F F G"`,
+    slots: [ {area:"A",size:"wide"},{area:"B",size:"tall"},{area:"C",size:"big"},{area:"D",size:"big"},
+             {area:"E",size:"tall"},{area:"F",size:"big"},{area:"G",size:"tall"},{area:"H",size:"wide"} ] },
+  // ---- smaller views (resize to fill) ----
+  { n:7, cols:4, rows:2, areas: `"A A B C" "D E F G"`,
+    slots: [ {area:"A",size:"wide"},{area:"B",size:"small"},{area:"C",size:"small"},{area:"D",size:"small"},{area:"E",size:"small"},{area:"F",size:"small"},{area:"G",size:"small"} ] },
+  { n:6, cols:4, rows:2, areas: `"A A B C" "D D E F"`,
+    slots: [ {area:"A",size:"wide"},{area:"B",size:"small"},{area:"C",size:"small"},{area:"D",size:"wide"},{area:"E",size:"small"},{area:"F",size:"small"} ] },
+  { n:5, cols:3, rows:2, areas: `"A A B" "C D E"`,
+    slots: [ {area:"A",size:"wide"},{area:"B",size:"small"},{area:"C",size:"small"},{area:"D",size:"small"},{area:"E",size:"small"} ] },
+  { n:4, cols:3, rows:2, areas: `"A A B" "C D B"`,
+    slots: [ {area:"A",size:"wide"},{area:"B",size:"tall"},{area:"C",size:"small"},{area:"D",size:"small"} ] },
+  { n:3, cols:3, rows:2, areas: `"A A B" "A A C"`,
+    slots: [ {area:"A",size:"big"},{area:"B",size:"small"},{area:"C",size:"small"} ] },
+  { n:2, cols:3, rows:1, areas: `"A A B"`,
+    slots: [ {area:"A",size:"wide"},{area:"B",size:"small"} ] },
+  { n:1, cols:1, rows:1, areas: `"A"`,
+    slots: [ {area:"A",size:"big"} ] },
+];
+const MAX_TILES = 10;
+
+let SLOTS = [], N = 0;
+function sizeW(s){ return s==="big" ? 3 : s==="small" ? 1 : 2; }
+// pick the fullest layout that fits `count` items (every slot gets a real item — no placeholders)
+function pickLayoutFor(count){
+  const cap = Math.min(count, MAX_TILES);
+  if(cap<=0) return null;
+  let elig = LAYOUTS.filter(L => L.n <= cap);
+  const maxN = Math.max(...elig.map(L=>L.n));
+  // full views (cap>=8): keep variety across the 8-10 layouts; small views: use the exact best fit
+  elig = maxN>=8 ? elig.filter(L=>L.n>=8) : elig.filter(L=>L.n===maxN);
+  return elig[Math.floor(Math.random()*elig.length)];
+}
+
+let pool = [];      // all items, priority-sorted
+let view = [];      // pool filtered by active category
+let visible = [];   // item in each slot
+let cursor = 0, rotIdx = 0;
+let activeCat = "all";
+
+const BUILTIN_CATEGORIES = [
+  ["all","All"],["tweets","X · Tweets"],["youtube","YouTube"],["linkedin","LinkedIn"],["uae","UAE"],
+  ["tools","Tools"],["writeups","Writeups"],
+  ["webapp","Web App"],["aisec","AI Security"],["aitrends","AI Trends"],
+  ["crypto","Cryptography"],["hardware","Hardware/Chips"],
+  ["network","Network"],["cloud","Cloud"],["mobile","Mobile"],["iot","IoT"],
+  ["wireless","Wireless"],["bugbounty","Bug Bounty"],
+];
+let CATEGORIES = [...BUILTIN_CATEGORIES];
+let CAT_LABEL = Object.fromEntries(CATEGORIES);
+
+// ---- Resource Control config + pins/saved/dismissed ----
+let CONFIG = { disabledSources: [], removedSources: [], hiddenTabs: [], customSources: [], customTabs: [], muteRules: [] };
+let PINS = [], SAVED = [], DISMISSED = [];
+try { PINS = JSON.parse(localStorage.getItem("tw-pins") || "[]"); } catch(e){ PINS = []; }
+try { SAVED = JSON.parse(localStorage.getItem("tw-saved") || "[]"); } catch(e){ SAVED = []; }
+try { DISMISSED = JSON.parse(localStorage.getItem("tw-dismissed") || "[]"); } catch(e){ DISMISSED = []; }
+const dismissedSet = () => new Set(DISMISSED);
+
+function rebuildCategories(){
+  const hidden = new Set(CONFIG.hiddenTabs || []);
+  const builtins = BUILTIN_CATEGORIES.filter(([id]) => id === "all" || !hidden.has(id));
+  const custom = (CONFIG.customTabs || []).map(t => [t.id, t.label]);
+  CATEGORIES = [...builtins, ...custom];
+  CAT_LABEL = Object.fromEntries(CATEGORIES);
+  CAT_LABEL["saved"] = "★ Saved"; // Saved isn't a tab chip; it lives in the header button
+}
+
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function relTime(iso){ const d=(Date.now()-Date.parse(iso))/1000; if(isNaN(d))return""; if(d<3600)return Math.max(1,Math.floor(d/60))+"m"; if(d<86400)return Math.floor(d/3600)+"h"; return Math.floor(d/86400)+"d"; }
+function tagHtml(tags){ const o=["hot","CVE","AI","offensive"]; const label={hot:"0DAY",CVE:"CVE",AI:"AI",offensive:"OFFSEC"};
+  return (tags||[]).filter(t=>o.includes(t)).slice(0,3).map(t=>`<span class="tag ${esc(t)}">${label[t]}</span>`).join(""); }
+
+function ytCardHtml(item){
+  const ttl = item.title.length > 130 ? item.title.slice(0,130).replace(/\s+\S*$/,"")+" …" : item.title;
+  return `<div class="card yt">
+    ${cardCtlHtml(item)}
+    <div class="yt-thumb" style="background-image:url('${esc(item.image||"")}')"><span class="yt-play">▶</span></div>
+    <div class="yt-body">
+      <div class="topbar"><span class="src">${esc(item.source)}</span><span class="rel">· ${relTime(item.publishedAt)}</span></div>
+      <h3>${esc(ttl)}</h3>
+      <div class="tags">${tagHtml(item.tags)}</div>
+    </div>
+  </div>`;
+}
+
+function cardHtml(item, size){
+  if(!item) return `<div class="card ${size}"><div class="placeholder">// scanning feed…</div></div>`;
+  if(size === "yt") return ytCardHtml(item);
+  const social = item.sourceType==="social";
+  const head = social
+    ? `<div class="tweet-head"><div class="avatar">${esc((item.author||"x")[0].toUpperCase())}</div>
+         <div><div class="src">${esc(item.author||item.source)}</div><div class="handle">${esc(item.handle||"")}</div></div>
+         <div class="xlogo">𝕏</div></div>`
+    : `<div class="topbar"><span class="sig">~$</span><span class="src">${esc(item.source)}</span>
+         <span class="rel">· ${relTime(item.publishedAt)}</span>${item.points?`<span>· ▲${item.points}`:""}</div>`;
+  const showImg = item.image && size !== "small"; // show a real image only — no keyword placeholders
+  const visual = showImg ? `<div class="thumb" style="background-image:url('${esc(item.image)}')"></div>` : "";
+  const ttl = item.title.length > 220 ? item.title.slice(0,220).replace(/\s+\S*$/,"")+" …" : item.title;
+  return `<div class="card ${size} ${social?'social':''} ${showImg?'hasthumb':''}">
+    ${cardCtlHtml(item)}
+    ${head}
+    ${visual}
+    <h3>${esc(ttl)}</h3>
+    <div class="excerpt">${esc(item.summary||"")}</div>
+    <div class="tags">${tagHtml(item.tags)}</div>
+  </div>`;
+}
+// save TOP-LEFT; dismiss (×) TOP-RIGHT; pin BOTTOM-RIGHT
+function cardCtlHtml(item){
+  const pinned = isPinned(item), saved = isSaved(item);
+  return `<div class="cardctl left">
+      <button class="cbtn ${saved?'on':''}" data-act="save" title="${saved?'Unsave':'Save'}">${saved?'★':'☆'}</button>
+    </div>
+    <div class="cardctl right">
+      <button class="cbtn dismiss" data-act="dismiss" title="Remove this box">✕</button>
+    </div>
+    <div class="cardctl botright">
+      <button class="cbtn ${pinned?'on':''}" data-act="pin" title="${pinned?'Unpin':'Pin'}">📌</button>
+    </div>`;
+}
+function isPinned(item){ return PINS.some(p => p.id === item.id); }
+function isSaved(item){ return SAVED.some(p => p.id === item.id); }
+
+function buildWall(){
+  const wall = document.getElementById("wall");
+  wall.innerHTML = SLOTS.map((s,i)=>`<div class="slot" style="grid-area:${s.area}" data-i="${i}">${cardHtml(visible[i], s.size)}</div>`).join("");
+  wall.querySelectorAll(".slot").forEach(slot=>{
+    slot.addEventListener("click",(e)=>{
+      const b = e.target.closest(".cbtn");
+      const it = visible[+slot.dataset.i];
+      if(b){ e.stopPropagation(); if(!it) return;
+        if(b.dataset.act==="pin") togglePin(it, b);
+        else if(b.dataset.act==="save") toggleSave(it);
+        else if(b.dataset.act==="dismiss") dismissItem(+slot.dataset.i);
+        return;
+      }
+      if(it) openModal(it);
+    });
+  });
+  requestAnimationFrame(fitAll);
+}
+
+// If a card has empty vertical space, grow its font (--fs) to fill the box. Cards use
+// margin-top:auto on .tags (flex fill), so we measure real content = sum of child heights
+// + flex gaps, and compare against the usable box height (clientHeight minus padding).
+// Typography is now fixed + clamped (title + short teaser), so no dynamic font fitting.
+function fitCard(){}
+function fitAll(){}
+
+// Build the wall sized to the current result count. No filler boxes: if there are fewer
+// results than a full layout, a smaller layout is chosen so every tile holds a real item;
+// if there are zero results, the page shows an empty state instead of placeholder boxes.
+function renderWall(){
+  const wall = document.getElementById("wall");
+  const count = view.length;
+  if(count <= 0){
+    SLOTS = []; N = 0; visible = [];
+    wall.classList.remove("ytwall");
+    wall.style.gridTemplateAreas = ""; wall.style.gridTemplateColumns = "1fr"; wall.style.gridTemplateRows = "1fr";
+    const label = activeCat==="all" ? "no live intel right now" : `no ${(CAT_LABEL[activeCat]||activeCat)} results right now`;
+    wall.innerHTML = `<div class="emptywall">// ${label}</div>`;
+    return;
+  }
+  // YouTube gets a dedicated grid of horizontal rectangles so the thumbnail + title are clear.
+  if(activeCat === "youtube"){
+    const items = view.slice(0, 8);
+    const cols = 2, rows = Math.max(1, Math.ceil(items.length / cols));
+    SLOTS = items.map(()=>({ size: "yt", area: "auto" }));
+    N = items.length;
+    wall.classList.add("ytwall");
+    wall.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+    wall.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+    wall.style.gridTemplateAreas = "none";
+    visible = items.slice();
+    cursor = N;
+    buildWall();
+    return;
+  }
+  wall.classList.remove("ytwall");
+  const L = pickLayoutFor(count);
+  SLOTS = L.slots; N = SLOTS.length;
+  wall.style.gridTemplateColumns = `repeat(${L.cols}, 1fr)`;
+  wall.style.gridTemplateRows = `repeat(${L.rows}, 1fr)`;
+  wall.style.gridTemplateAreas = L.areas;
+  // Content-aware placement. "wide"/"big" tiles are ≥2 columns (roomy); "tall"/"small" are
+  // 1 column (narrow) — long words break there. So roomy tiles take the top-priority items,
+  // and narrow tiles take the SHORTEST-title remaining items.
+  const isNarrow = (s)=> s==="tall" || s==="small";
+  const chosen = view.slice(0, N);
+  const roomy = SLOTS.map((s,i)=>i).filter(i=>!isNarrow(SLOTS[i].size))
+                     .sort((a,b)=> sizeW(SLOTS[b].size)-sizeW(SLOTS[a].size));
+  const narrow = SLOTS.map((s,i)=>i).filter(i=>isNarrow(SLOTS[i].size));
+  visible = new Array(N).fill(null);
+  const roomyItems = chosen.slice(0, roomy.length);                          // highest priority
+  const narrowItems = chosen.slice(roomy.length).sort((a,b)=> a.title.length - b.title.length);
+  roomy.forEach((slotIdx, k)=>{ visible[slotIdx] = roomyItems[k] || null; });
+  narrow.forEach((slotIdx, k)=>{ visible[slotIdx] = narrowItems[k] || null; });
+  cursor = N;
+  buildWall();
+}
+
+// rotate ONE slot; rotated-out items cycle back via the wrapping cursor (never discarded)
+function rotate(){
+  if(view.length<=N) return;   // not enough in the active filter to rotate
+  const i = rotIdx % N; rotIdx++;
+  if(visible[i] && isPinned(visible[i])) return; // never rotate out a pinned box
+  const slot = document.querySelector(`.slot[data-i="${i}"]`);
+  if(!slot) return;
+  const card = slot.firstElementChild;
+  card.classList.add("swap");
+  setTimeout(()=>{
+    const vis = new Set(visible.filter(Boolean).map(x=>x.id));
+    let next=null, tries=0;
+    while(tries<view.length){ const c=view[cursor%view.length]; cursor++; if(c&&!vis.has(c.id)){next=c;break;} tries++; }
+    if(next){ visible[i]=next; slot.innerHTML=cardHtml(next, SLOTS[i].size); requestAnimationFrame(()=>fitCard(slot.firstElementChild)); }
+    else card.classList.remove("swap");
+  },560);
+}
+
+// deterministic per-day shuffle so the wall is re-arranged daily but stable within a day
+function dailySeed(){ const d=new Date(); return (d.getFullYear()*372 + d.getMonth()*31 + d.getDate()) >>> 0; }
+function dailyShuffle(arr){
+  let a=arr.slice(), s=dailySeed()||1;
+  const rnd=()=>{ s=(s*1664525+1013904223)>>>0; return s/4294967296; };
+  for(let i=a.length-1;i>0;i--){ const j=Math.floor(rnd()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; }
+  return a;
+}
+function computeView(){
+  if(activeCat==="saved"){ view = SAVED.slice(); return; } // the Saved panel
+  const dis = dismissedSet();
+  let base = (activeCat==="all" ? pool : pool.filter(i => (i.categories||[]).includes(activeCat)))
+             .filter(i => !dis.has(i.id));                 // removed/dismissed boxes stay gone
+  // The "All" tab shows fresh news only — nothing older than 2 days (but never left empty).
+  if(activeCat==="all"){
+    const cutoff = Date.now() - 2*864e5;
+    const fresh = base.filter(i => Date.parse(i.publishedAt) >= cutoff);
+    base = fresh.length >= 8 ? fresh : base;
+  }
+  base = dailyShuffle(base);                               // shuffle presentation daily
+  // pinned items are always present (kept as snapshots) and sit at the front of the wall
+  const pinIds = new Set(PINS.map(p=>p.id));
+  view = [...PINS.filter(p=>!dis.has(p.id)), ...base.filter(i => !pinIds.has(i.id))];
+}
+function applyFilter(cat){
+  activeCat = cat;
+  computeView();
+  document.querySelectorAll(".chip").forEach(c=> c.classList.toggle("active", c.dataset.cat===cat));
+  const sb = document.getElementById("savedBtn"); if(sb) sb.classList.toggle("on", cat==="saved");
+  rotIdx = 0; renderWall();
+}
+function buildChips(counts){
+  document.getElementById("chips").innerHTML = CATEGORIES.map(([id,label])=>{
+    const n = id==="all" ? pool.length : id==="saved" ? SAVED.length : (counts[id]||0);
+    return `<span class="chip ${id===activeCat?'active':''} ${id==='saved'?'savedchip':''}" data-cat="${id}">${label}<span class="n">${n}</span></span>`;
+  }).join("");
+  document.querySelectorAll(".chip").forEach(c=> c.addEventListener("click",()=>applyFilter(c.dataset.cat)));
+}
+
+// ---- theme switcher ----
+// Color themes (original design, palette swap) + DESIGN themes (full redesign:
+// different card chrome, background animation and motion language).
+const THEMES = {
+  // warm amber on true black, with a cool neutral ramp for panels and rules
+  amber:  { name:"AMBER", accent:"#FF7101", dim:"#B35000", bg:"#000000", bg2:"#1A2125", panel:"#1A2125", panel2:"#12171A", line:"#4A4F54", text:"#D5D6D7", muted:"#8D9094" },
+  htb:    { name:"HTB Green",  accent:"#9fef00", dim:"#5c8a00", bg:"#0a0e17", bg2:"#0d1220", panel:"#111a2b", panel2:"#0e1524", line:"#1c2b44" },
+  thm:    { name:"THM Red",    accent:"#ff2f5e", dim:"#a01235", bg:"#0f0a0d", bg2:"#160b11", panel:"#1c0f16", panel2:"#160b11", line:"#3a1a25" },
+  // -- design themes --
+  // `swatch` is the gradient shown in the picker — it reads as the theme without naming it
+  cyborg: { name:"CYBORG — HUD optics, glitch type, live circuit traces", design:"cyborg",
+            swatch:"conic-gradient(from 220deg, #00e5ff, #16b4d8, #ff2f9e, #00e5ff)",
+            accent:"#00e5ff", dim:"#0b7285", bg:"#04070c", bg2:"#070d16", panel:"#0a1420", panel2:"#070e18", line:"#12384f", text:"#d2f0ff", muted:"#5d8296" },
+  onion:  { name:"ONION — deep-web underground: onion-layer cards, encrypted relay circuits", design:"onion",
+            swatch:"conic-gradient(from 220deg, #a86edd, #33f0a5, #2b1640, #a86edd)",
+            accent:"#a86edd", dim:"#5b3286", bg:"#050308", bg2:"#0a0610", panel:"#100a18", panel2:"#0a0611", line:"#2a1c3d", text:"#ded2ef", muted:"#7c6b95" },
+  ghost:  { name:"GHOST — stealth-ops dossier: radar sweep, redaction wipes, blood-red accents", design:"ghost",
+            swatch:"conic-gradient(from 220deg, #aab4bc, #39424a, #ff3b3f, #aab4bc)",
+            accent:"#ff3b3f", dim:"#8a1f24", bg:"#0a0c0d", bg2:"#0d1012", panel:"#12161a", panel2:"#0e1114", line:"#242c33", text:"#c9d1d6", muted:"#66727c" },
+  outrun: { name:"OUTRUN — synthwave horizon: neon grid, aurora ribbons, chrome nights", design:"outrun",
+            swatch:"conic-gradient(from 220deg, #00e5ff, #ff3caa, #ffcc44, #00e5ff)",
+            accent:"#ff3caa", dim:"#a3186b", bg:"#0c0418", bg2:"#120826", panel:"#1a0c33", panel2:"#130824", line:"#3a1f5e", text:"#eadcff", muted:"#8f7fb8" },
+};
+function hexToRgb(h){ const n=parseInt(h.replace("#",""),16); return `${(n>>16)&255}, ${(n>>8)&255}, ${n&255}`; }
+function applyTheme(id){
+  const t = THEMES[id] || THEMES.cyborg, r = document.documentElement.style;
+  r.setProperty("--green", t.accent); r.setProperty("--green-dim", t.dim);
+  r.setProperty("--accent-rgb", hexToRgb(t.accent));
+  r.setProperty("--bg", t.bg); r.setProperty("--bg2", t.bg2);
+  r.setProperty("--panel", t.panel); r.setProperty("--panel2", t.panel2);
+  r.setProperty("--line", t.line);
+  r.setProperty("--text", t.text || "#c7d5e0");
+  r.setProperty("--muted", t.muted || "#5b6b7f");
+  window.__themeAccent = t.accent;
+  // design themes restyle the whole dashboard + swap the ambient animation
+  document.body.dataset.design = t.design || "";
+  window.__bgMode = { cyborg:"circuit", ghost:"radar", outrun:"aurora", onion:"relay" }[t.design] || "matrix";
+  try { localStorage.setItem("offsec-theme", id); } catch(e){}
+  document.querySelectorAll("#swatches [data-t]").forEach(s=> s.classList.toggle("active", s.dataset.t===id));
+}
+function buildSwatches(){
+  // design themes first, then the plain colour palettes; all render as gradient circles
+  const all = Object.entries(THEMES);
+  const ordered = [...all.filter(([,t])=>t.design), ...all.filter(([,t])=>!t.design)];
+  document.getElementById("swatches").innerHTML = ordered.map(([id,t])=>
+    `<span class="sw${t.design?" design":""}" data-t="${id}" title="${esc(t.name)}"
+       style="background:${t.swatch||t.accent};color:${t.accent}"></span>`).join("");
+  document.querySelectorAll("#swatches [data-t]").forEach(s=> s.addEventListener("click",()=>applyTheme(s.dataset.t)));
+  let saved = "cyborg"; try { saved = localStorage.getItem("offsec-theme") || "cyborg"; } catch(e){}
+  if(!THEMES[saved]) saved = "cyborg"; // e.g. a removed theme id from an older visit
+  applyTheme(saved);
+}
+// resources dropdown
+document.getElementById("resBtn").addEventListener("click", e=>{ e.stopPropagation(); document.getElementById("resMenu").classList.toggle("open"); });
+document.addEventListener("click", ()=> document.getElementById("resMenu").classList.remove("open"));
+
+function openModal(item){
+  document.getElementById("modal").innerHTML = `<button class="close" onclick="closeModal()">×</button>
+    <div class="bar">┌─[ intel ]─ ${esc(item.sourceType)} ─────────────</div>
+    <div class="meta">${esc(item.source)} · ${esc(new Date(item.publishedAt).toLocaleString())}${item.points?` · ▲${item.points}`:""}${item.comments?` · ${item.comments} comments`:""}</div>
+    <h2>${esc(item.title)}</h2>
+    <div class="tags" style="margin-bottom:16px">${tagHtml(item.tags)}</div>
+    <p>${esc(item.summary || "No summary captured. Open the source for the full write-up.")}</p>
+    <a class="open" href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">▶ open source ↗</a>`;
+  document.getElementById("overlay").classList.add("open");
+}
+function closeModal(){ document.getElementById("overlay").classList.remove("open"); }
+document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeModal(); });
+
+function setStats(items){
+  const c = t => items.filter(i=>i.tags.includes(t)).length;
+  const hot=c("hot"), cve=c("CVE"), ai=c("AI");
+  document.getElementById("s-total").textContent = items.length;
+  document.getElementById("s-hot").textContent = hot;
+  document.getElementById("s-cve").textContent = cve;
+  document.getElementById("s-ai").textContent = ai;
+  // threat meter from how much is "hot"
+  const ratio = items.length ? hot/items.length : 0;
+  const lvl = Math.min(5, Math.round(ratio*10));
+  document.querySelectorAll("#bars i").forEach((b,idx)=> b.classList.toggle("on", idx<lvl));
+  const names=["LOW","GUARDED","ELEVATED","HIGH","SEVERE","CRITICAL"];
+  document.getElementById("threatlvl").textContent = names[lvl]||"HIGH";
+}
+
+async function load(){
+  try{
+    const r = await fetch("/api/items");
+    const d = await r.json();
+    pool = d.items || [];
+    document.getElementById("status").textContent = pool.length+" live";
+    document.getElementById("statusword").textContent = "monitoring "+Object.keys(d.sources||{}).length+" sources";
+    document.getElementById("srcline").innerHTML = `<span class="k">src:</span> `+Object.entries(d.sources||{}).map(([k,v])=>`${esc(k)}(${v})`).join(" ");
+    document.getElementById("updated").textContent = d.fetchedAt? new Date(d.fetchedAt).toLocaleTimeString() : "—";
+    setStats(pool);
+    const panelOpen = document.getElementById("panel")?.classList.contains("open");
+    if(Array.isArray(d.customTabs) && !panelOpen){ CONFIG.customTabs = d.customTabs; }
+    rebuildCategories();
+    lastCounts = d.categories||{};
+    buildChips(lastCounts);
+    computeView();
+    // (re)build the wall on first load or when the result count no longer fills the current
+    // layout; otherwise leave the layout stable so periodic refreshes don't reshuffle it.
+    if(N===0 || view.length < N) renderWall();
+  }catch(e){ document.getElementById("status").textContent = "reconnecting…"; }
+}
+let lastCounts = {};
+
+// ---- ambient background: matrix / circuit traces / radar sweep / accretion orbit ----
+// One canvas, four renderers. window.__bgMode is set by applyTheme:
+//   "matrix"  — classic rain (original + color themes)
+//   "circuit" — CYBORG: neon traces routing across the board like live PCB signals
+//   "radar"   — GHOST: rotating sweep with contact blips fading like a stealth scope
+//   "aurora"  — OUTRUN: soft neon light ribbons undulating across the screen
+//   "relay"   — ONION: onion-routing circuits building through hops, packets in transit
+(function ambient(){
+  const cv=document.getElementById("matrix"), ctx=cv.getContext("2d");
+  let cols, drops, fontSize=14, traces=[], blips=[], sweep=0, wavePhase=0, nodes=[], circuits=[];
+  const chars="01</>{}#$%&*+=[]日ハ0FCVEXPLOIT01".split("");
+  function newTrace(){
+    const horiz = Math.random()<.5, v=(Math.random()<.5?-1:1)*(1.4+Math.random()*2.2);
+    return { x:Math.random()*cv.width, y:Math.random()*cv.height, dx:horiz?v:0, dy:horiz?0:v, life:140+Math.random()*260 };
+  }
+  function resize(){
+    cv.width=innerWidth; cv.height=innerHeight;
+    cols=Math.floor(cv.width/fontSize); drops=Array(cols).fill(1);
+    traces=Array.from({length:26},()=>newTrace());
+    blips=[];
+    nodes=Array.from({length:34},()=>({ x:40+Math.random()*(cv.width-80), y:40+Math.random()*(cv.height-80),
+      p:Math.random()*7, s:.02+Math.random()*.05 }));
+    circuits=[];
+  }
+  resize(); addEventListener("resize", resize);
+  let boost=1, lastMode="";
+  window.__boost = ()=>{ boost=3.2; setTimeout(()=>boost=1,4000); };
+  setInterval(()=>{
+    const mode = window.__bgMode || "matrix", ac = window.__themeAccent || "#9fef00";
+    if(mode!==lastMode){ ctx.clearRect(0,0,cv.width,cv.height); lastMode=mode; } // clean switch
+    if(mode==="radar"){
+      ctx.fillStyle="rgba(8,10,11,.14)"; ctx.fillRect(0,0,cv.width,cv.height); // slow phosphor decay
+      const cx=cv.width*.5, cy=cv.height*.55, R=Math.hypot(cv.width,cv.height)*.62;
+      // static scope furniture — faint rings + crosshair (redrawn against the fade)
+      ctx.strokeStyle="rgba(120,135,145,.05)"; ctx.lineWidth=1;
+      for(const f of [.18,.36,.54,.78]){ ctx.beginPath(); ctx.arc(cx,cy,R*f,0,7); ctx.stroke(); }
+      ctx.beginPath(); ctx.moveTo(cx-R,cy); ctx.lineTo(cx+R,cy); ctx.moveTo(cx,cy-R); ctx.lineTo(cx,cy+R); ctx.stroke();
+      // the sweep — leading rim sharp, short decaying tail
+      sweep += .016;
+      for(let k=0;k<9;k++){
+        const a=sweep-k*.02;
+        ctx.strokeStyle=`rgba(255,59,63,${.16*(1-k/9)})`; ctx.lineWidth=k?1:1.6;
+        ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+Math.cos(a)*R, cy+Math.sin(a)*R); ctx.stroke();
+      }
+      // contacts — appear near the beam, ping outward, fade
+      if(Math.random()<.05){ const d=R*(0.15+Math.random()*.7), a=sweep-Math.random()*.15;
+        blips.push({ x:cx+Math.cos(a)*d, y:cy+Math.sin(a)*d, l:1 }); }
+      blips=blips.filter(b=>(b.l-=.012)>0);
+      for(const b of blips){
+        ctx.fillStyle=`rgba(255,59,63,${.6*b.l})`; ctx.beginPath(); ctx.arc(b.x,b.y,2,0,7); ctx.fill();
+        ctx.strokeStyle=`rgba(255,59,63,${.22*b.l})`; ctx.beginPath(); ctx.arc(b.x,b.y,2+14*(1-b.l),0,7); ctx.stroke();
+      }
+    } else if(mode==="relay"){
+      // ONION: an onion-routing network. Relay nodes idle in the dark; every so often a circuit
+      // is built through 3-4 random hops, a packet travels it, then the circuit tears down.
+      ctx.fillStyle="rgba(5,3,8,.16)"; ctx.fillRect(0,0,cv.width,cv.height);
+      for(const n of nodes){                                  // idle relays, slow breathing
+        n.p+=n.s; const tw=.35+.3*Math.abs(Math.sin(n.p));
+        ctx.fillStyle=`rgba(168,110,221,${tw*.55})`;
+        ctx.beginPath(); ctx.arc(n.x,n.y,1.4,0,7); ctx.fill();
+      }
+      if(circuits.length<3 && Math.random()<.045){            // build a new circuit
+        const pick=[], pool=[...nodes.keys()];
+        for(let k=0;k<3+(Math.random()<.5?1:0);k++) pick.push(...pool.splice(Math.random()*pool.length|0,1));
+        circuits.push({ path:pick.map(i=>nodes[i]), t:0, life:1 });
+      }
+      for(const c of circuits){
+        c.t+=.018; if(c.t>=1) c.life-=.03;
+        const segs=c.path.length-1, prog=Math.min(1,c.t)*segs;
+        ctx.lineWidth=1; ctx.strokeStyle=`rgba(168,110,221,${.35*c.life})`;
+        ctx.beginPath();                                      // the established portion of the route
+        for(let s=0;s<segs;s++){
+          const a=c.path[s], b=c.path[s+1], f=Math.max(0,Math.min(1,prog-s));
+          if(f<=0) break;
+          ctx.moveTo(a.x,a.y); ctx.lineTo(a.x+(b.x-a.x)*f, a.y+(b.y-a.y)*f);
+        }
+        ctx.stroke();
+        const s=Math.min(segs-1,Math.floor(prog)), f=prog-s;   // the packet itself
+        if(s>=0 && c.t<=1){
+          const a=c.path[s], b=c.path[s+1];
+          const px=a.x+(b.x-a.x)*f, py=a.y+(b.y-a.y)*f;
+          ctx.fillStyle=`rgba(51,240,165,${.9*c.life})`;
+          ctx.beginPath(); ctx.arc(px,py,2.4,0,7); ctx.fill();
+          ctx.strokeStyle=`rgba(51,240,165,${.3*c.life})`;
+          ctx.beginPath(); ctx.arc(px,py,7,0,7); ctx.stroke();
+        }
+        for(let k=0;k<=Math.min(segs,Math.ceil(prog));k++){     // hop nodes light up as reached
+          const n=c.path[k];
+          ctx.fillStyle=`rgba(51,240,165,${.75*c.life})`;
+          ctx.beginPath(); ctx.arc(n.x,n.y,2.6,0,7); ctx.fill();
+        }
+      }
+      circuits=circuits.filter(c=>c.life>0);
+    } else if(mode==="aurora"){
+      // OUTRUN: neon aurora — soft light ribbons undulating across the screen. Each ribbon is
+      // a sine curve with its own speed/phase, stroked wide through a blur so it reads as glow
+      // rather than a drawn line. No hard geometry, so it never competes with the cards.
+      ctx.clearRect(0,0,cv.width,cv.height);
+      wavePhase += .011;
+      const RIB=5;
+      ctx.lineCap="round";
+      for(let b=0;b<RIB;b++){
+        const t=b/(RIB-1);
+        const baseY = cv.height*(.20+.15*b) + Math.sin(wavePhase*.7+b)*cv.height*.03;
+        const amp   = cv.height*(.05+.028*Math.sin(b*1.9));
+        const freq  = .0011+b*.00035;
+        const ph    = wavePhase*(.55+b*.2)+b*1.7;
+        // magenta at the top of the stack → cyan at the bottom
+        const g=ctx.createLinearGradient(0,0,cv.width,0);
+        g.addColorStop(0,   `rgba(255,60,170,0)`);
+        g.addColorStop(.28, `rgba(255,60,170,${.5-.28*t})`);
+        g.addColorStop(.62, `rgba(${Math.round(120*t)},${Math.round(120+109*t)},${Math.round(200+55*t)},${.42})`);
+        g.addColorStop(1,   `rgba(0,229,255,0)`);
+        ctx.strokeStyle=g;
+        for(const pass of [{w:26,a:.16,f:"blur(16px)"},{w:7,a:.5,f:"blur(5px)"},{w:1.6,a:.7,f:"none"}]){
+          ctx.globalAlpha=pass.a; ctx.lineWidth=pass.w; ctx.filter=pass.f;
+          ctx.beginPath();
+          for(let x=0;x<=cv.width;x+=14){
+            const y=baseY+Math.sin(x*freq+ph)*amp+Math.sin(x*freq*2.7+ph*1.4)*amp*.28;
+            x===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+          }
+          ctx.stroke();
+        }
+      }
+      ctx.filter="none"; ctx.globalAlpha=1;
+    } else if(mode==="circuit"){
+      ctx.fillStyle="rgba(0,0,0,.05)"; ctx.fillRect(0,0,cv.width,cv.height);
+      ctx.lineWidth=1.4;
+      for(const t of traces){
+        const px=t.x, py=t.y; t.x+=t.dx; t.y+=t.dy;
+        ctx.strokeStyle = Math.random()<.1 ? "#ff2f9e" : ac; ctx.globalAlpha=.5;
+        ctx.beginPath(); ctx.moveTo(px,py); ctx.lineTo(t.x,t.y); ctx.stroke(); ctx.globalAlpha=1;
+        if(Math.random()<.035){ // right-angle turn, like a PCB trace
+          const v=(Math.random()<.5?-1:1)*(1.4+Math.random()*2.2);
+          if(t.dx!==0){ t.dx=0; t.dy=v; } else { t.dy=0; t.dx=v; }
+        }
+        if(--t.life<0 || t.x<-10||t.x>cv.width+10||t.y<-10||t.y>cv.height+10) Object.assign(t, newTrace());
+      }
+    } else { // matrix — deliberately restrained: short trails, sparse columns, dim glyphs
+      ctx.fillStyle="rgba(0,0,0,.14)"; ctx.fillRect(0,0,cv.width,cv.height); // faster fade = shorter tails
+      ctx.fillStyle = ac; ctx.font=fontSize+"px monospace";
+      ctx.globalAlpha=.45;
+      for(let i=0;i<drops.length;i++){
+        if(i%2) { drops[i]++; continue; }                 // every other column only — halves the density
+        ctx.fillText(chars[Math.floor(Math.random()*chars.length)], i*fontSize, drops[i]*fontSize);
+        if(drops[i]*fontSize>cv.height && Math.random()>0.975/boost) drops[i]=0;
+        drops[i]++;
+      }
+      ctx.globalAlpha=1;
+    }
+  }, 70);
+})();
+
+// ---- fun: konami easter egg → "root access" + matrix overdrive ----
+(function(){
+  const seq=[38,38,40,40,37,39,37,39,66,65]; let p=0;
+  addEventListener("keydown",e=>{
+    p = e.keyCode===seq[p] ? p+1 : (e.keyCode===seq[0]?1:0);
+    if(p===seq.length){ p=0; window.__boost&&window.__boost();
+      const t=document.getElementById("toast"); t.textContent="⚡ ROOT ACCESS GRANTED ⚡"; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),2600);
+    }
+  });
+})();
+
+// ===================== RESOURCE CONTROL PANEL =====================
+async function loadConfig(){
+  try{
+    const r = await fetch("/api/config"); const c = await r.json();
+    CONFIG = { disabledSources:c.disabledSources||[], removedSources:c.removedSources||[], hiddenTabs:c.hiddenTabs||[], customSources:c.customSources||[], customTabs:c.customTabs||[], muteRules:c.muteRules||[] };
+    rebuildCategories();
+  }catch(e){ /* keep defaults */ }
+}
+function pStatus(msg, ok){ const el=document.getElementById("pStatus"); el.textContent=msg||""; el.style.color = ok===false ? "var(--red)" : ok ? "var(--green)" : "var(--muted)"; }
+// Pending-change tracking — nothing on this panel takes effect until "Save & apply",
+// so make that unmistakable instead of leaving the user guessing.
+let DIRTY = 0;
+function markDirty(msg){
+  DIRTY++;
+  document.getElementById("pSaveBtn")?.classList.add("needs-save");
+  pStatus(`${msg} — ${DIRTY} unsaved change${DIRTY>1?"s":""}`);
+}
+function clearDirty(){ DIRTY = 0; document.getElementById("pSaveBtn")?.classList.remove("needs-save"); }
+function openPanel(){ loadConfig().then(()=>{ renderPanel(); }); showPanelMenu(); document.getElementById("panel").classList.add("open"); document.getElementById("panelScrim").classList.add("open"); }
+function closePanel(){ document.getElementById("panel").classList.remove("open"); document.getElementById("panelScrim").classList.remove("open"); pStatus(""); }
+
+// menu-first navigation: menu → chosen setting's view → back
+function showPanelMenu(){
+  document.getElementById("panelMenu").style.display = "flex";
+  document.querySelectorAll(".pview").forEach(v=>v.classList.remove("active"));
+  pStatus("");
+}
+function showPanelView(id){
+  document.getElementById("panelMenu").style.display = "none";
+  document.querySelectorAll(".pview").forEach(v=>v.classList.toggle("active", v.dataset.view===id));
+  if(id==="tabmgmt"){ renderRemoveAction(); }
+  pStatus("");
+}
+
+// which sources feed a given tab (derived from the live items) + user's custom sources
+function sourcesForTab(tabId){
+  const custom = CONFIG.customSources.filter(cs => tabId==="all" || (cs.tabs||[]).includes(tabId));
+  const removed = new Set((CONFIG.removedSources||[]).map(s=>s.toLowerCase()));
+  const counts = {}, sampleUrl = {};
+  for(const it of pool){
+    if(tabId!=="all" && !(it.categories||[]).includes(tabId)) continue;
+    counts[it.source] = (counts[it.source]||0)+1;
+    if(!sampleUrl[it.source] && it.url) sampleUrl[it.source] = it.url; // a link to review the source
+  }
+  const customByName = Object.fromEntries(custom.map(c=>[c.name,c]));
+  const rows = Object.entries(counts).map(([name,count])=>({ name, count, custom: !!customByName[name], url: sampleUrl[name] || customByName[name]?.url || "" }));
+  // include custom sources that currently have 0 live items too
+  for(const cs of custom){ if(!counts[cs.name]) rows.push({ name: cs.name, count: 0, custom: true, url: cs.url }); }
+  return rows.filter(r => !removed.has(r.name.toLowerCase())).sort((a,b)=> b.count-a.count);
+}
+function renderPanel(){
+  const cur = activeCat || "all";
+  // the ONE tab selector — drives both the resource list and the danger zone
+  const sel = document.getElementById("pTab");
+  sel.innerHTML = CATEGORIES.map(([id,label])=>`<option value="${id}" ${id===cur?"selected":""}>${esc(label)}</option>`).join("");
+  sel.onchange = ()=>{ renderResList(); renderRemoveAction(); };
+  // add view — attach-to-tab dropdown
+  const add = document.getElementById("pAddTab");
+  add.innerHTML = CATEGORIES.filter(([id])=>id!=="saved").map(([id,label])=>`<option value="${id}" ${id===cur?"selected":""}>${esc(label)}</option>`).join("");
+  renderResList();
+  renderRemoveAction();
+  renderPins();
+}
+// ---- danger zone: acts on whichever tab is selected above. It never rebuilds the <select>,
+// which is what previously made the button disappear when you changed the selection. ----
+function renderRemoveAction(){
+  const wrap = document.getElementById("pRemoveAction"); if(!wrap) return;
+  const tab = document.getElementById("pTab").value;
+  const label = CAT_LABEL[tab] || tab;
+  if(tab === "all" || tab === "saved"){
+    wrap.innerHTML = `<div class="phint">“${esc(label)}” is built into the app and can't be removed. Choose another tab above.</div>`;
+    return;
+  }
+  const custom = (CONFIG.customTabs||[]).some(t=>t.id===tab);
+  wrap.innerHTML = `<div class="phint" style="margin-bottom:9px">${custom
+      ? "Custom tab — removing deletes it and its attached sources."
+      : "Built-in tab — removing hides it from the bar; its sources stay available elsewhere."}</div>
+    <button class="pbtn danger" onclick="askRemoveTab()">🗑 Remove “${esc(label)}”</button>`;
+}
+function askRemoveTab(){
+  const tab = document.getElementById("pTab").value;
+  if(!tab || tab === "all" || tab === "saved") return;
+  const label = CAT_LABEL[tab] || tab;
+  const custom = (CONFIG.customTabs||[]).some(t=>t.id===tab);
+  document.getElementById("pRemoveAction").innerHTML = `
+    <div class="confirm-box">
+      Really remove <b>“${esc(label)}”</b>?<br>
+      <span class="phint">${custom ? "This custom tab will be deleted." : "This built-in tab will be hidden from the bar."}</span>
+      <div class="prow" style="margin-top:10px; margin-bottom:0">
+        <button class="pbtn danger" onclick="doRemoveTab('${esc(tab).replace(/'/g,"\\'")}')">Yes, remove it</button>
+        <button class="pbtn ghost" onclick="renderRemoveAction()">Cancel</button>
+      </div>
+    </div>`;
+}
+function doRemoveTab(tab){
+  if(!tab || tab === "all" || tab === "saved") return;
+  const label = CAT_LABEL[tab] || tab;
+  const custom = (CONFIG.customTabs||[]).find(t=>t.id===tab);
+  if(custom){ CONFIG.customTabs = CONFIG.customTabs.filter(t=>t.id!==tab); }
+  else if(!CONFIG.hiddenTabs.includes(tab)){ CONFIG.hiddenTabs.push(tab); }
+  rebuildCategories();
+  if(activeCat===tab){ activeCat="all"; }
+  buildChips(lastCounts);
+  renderPanel();                     // selector rebuilds and lands on a still-valid tab
+  markDirty(`Removed “${label}”`);
+}
+// jump to the Add view with the tab you're working on already selected
+function addResourceToCurrentTab(){
+  const tab = document.getElementById("pTab").value;
+  showPanelView("add");
+  const add = document.getElementById("pAddTab");
+  if(add && tab !== "saved") add.value = tab;
+  document.getElementById("pAddInput").focus();
+}
+function renderResList(){
+  const tab = document.getElementById("pTab").value;
+  const rows = sourcesForTab(tab);
+  const disabled = new Set(CONFIG.disabledSources.map(s=>s.toLowerCase()));
+  const el = document.getElementById("pResList");
+  const badge = document.getElementById("pResCount");
+  if(badge) badge.textContent = rows.length ? rows.length : "";
+  if(!rows.length){ el.innerHTML = `<div class="phint">Nothing feeds this tab yet — add a resource below.</div>`; return; }
+  el.innerHTML = rows.map(r=>{
+    const off = disabled.has(r.name.toLowerCase());
+    const nm = r.url
+      ? `<a class="rname" href="${esc(r.url)}" target="_blank" rel="noopener" title="Open to review">${esc(r.name)} ↗</a>`
+      : `<span class="rname">${esc(r.name)}</span>`;
+    return `<div class="resrow">
+      <input type="checkbox" ${off?"":"checked"} data-src="${esc(r.name)}" onchange="toggleSource(this)">
+      ${nm}
+      ${r.custom?'<span class="rcustom">custom</span>':''}
+      <span class="rcount">${r.count}</span>
+      <button class="rdel" title="Remove entirely" onclick="removeSource('${esc(r.name).replace(/'/g,"\\'")}', ${r.custom})">✕</button>
+    </div>`;
+  }).join("");
+}
+function toggleSource(cb){
+  const name = cb.dataset.src;
+  const set = new Set(CONFIG.disabledSources);
+  if(cb.checked) set.delete(name); else set.add(name);
+  CONFIG.disabledSources = [...set];
+  renderResList();
+}
+function removeSource(name, custom){
+  if(custom){
+    CONFIG.customSources = CONFIG.customSources.filter(cs=>cs.name!==name); // delete the custom source
+  } else if(!CONFIG.removedSources.includes(name)){
+    CONFIG.removedSources.push(name); // remove built-in entirely (dropped from list + wall)
+  }
+  CONFIG.disabledSources = CONFIG.disabledSources.filter(s=>s!==name);
+  renderResList();            // row disappears
+  markDirty(`Removed “${name}”`);
+}
+
+// ---- verify + add a resource ----
+let pendingVerified = null;
+async function verifyResource(){
+  const input = document.getElementById("pAddInput").value.trim();
+  const out = document.getElementById("pVerifyOut");
+  out.className = "verify-out"; out.textContent = "Verifying (security + reachability)…";
+  pendingVerified = null;
+  try{
+    const r = await fetch("/api/verify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({input})});
+    const v = await r.json();
+    if(v.ok){
+      const dup = alreadyExists(v.name, v.feedUrl);
+      if(dup){
+        pendingVerified = null;
+        out.className = "verify-out bad";
+        out.textContent = `✓ Reachable, but “${dup}” is already in your resources — not adding a duplicate.`;
+      } else {
+        pendingVerified = v;
+        out.className = "verify-out ok";
+        out.innerHTML = `✓ ${esc(v.reason)} <span class="vt">${(v.sampleTitles||[]).map(t=>"• "+esc(t.slice(0,52))).join("<br>")}</span>
+          <div class="prow" style="margin-top:8px"><button class="pbtn primary" onclick="addVerified()">Add “${esc(v.name)}” to «${esc(CAT_LABEL[document.getElementById('pAddTab').value]||'this tab')}»</button></div>`;
+      }
+    } else {
+      out.className = "verify-out bad"; out.textContent = "✕ " + (v.reason||"Could not verify.");
+    }
+  }catch(e){ out.className="verify-out bad"; out.textContent = "✕ verify failed: "+e.message; }
+}
+// returns the matching existing resource name if this source is already present, else ""
+function alreadyExists(name, url){
+  const nm = (name||"").toLowerCase().trim();
+  const u = (url||"").toLowerCase().replace(/\/+$/,"");
+  for(const cs of CONFIG.customSources){
+    if(cs.name.toLowerCase()===nm) return cs.name;
+    if((cs.url||"").toLowerCase().replace(/\/+$/,"")===u) return cs.name;
+  }
+  const liveSource = [...new Set(pool.map(i=>i.source))].find(s=>s.toLowerCase()===nm);
+  if(liveSource) return liveSource;
+  return "";
+}
+function addVerified(){
+  if(!pendingVerified) return;
+  const tab = document.getElementById("pAddTab").value;
+  const name = pendingVerified.name || pendingVerified.feedUrl;
+  const dup = alreadyExists(name, pendingVerified.feedUrl);
+  if(dup){ pStatus(`“${dup}” already exists — not added.`, false); pendingVerified=null; return; }
+  CONFIG.customSources.push({ id:"src-"+Date.now().toString(36), name, url: pendingVerified.feedUrl, tabs: tab==="all"?[]:[tab], tags: [], kind:"rss" });
+  CONFIG.disabledSources = CONFIG.disabledSources.filter(s=>s!==name);
+  CONFIG.removedSources = (CONFIG.removedSources||[]).filter(s=>s!==name);
+  document.getElementById("pAddInput").value=""; document.getElementById("pVerifyOut").innerHTML=""; pendingVerified=null;
+  renderResList();
+  markDirty(`Added “${name}”`);
+}
+
+// ---- create a tab ----
+const STOP = new Set("the a an of for and or to in on with about into from is are be news latest top best your you their our security cyber".split(" "));
+function keywordsFrom(desc){
+  return [...new Set(desc.toLowerCase().match(/[a-z0-9][a-z0-9+\-]{2,}/g)||[])].filter(w=>!STOP.has(w)).slice(0,10);
+}
+function createTab(auto){
+  const name = document.getElementById("pNewTabName").value.trim();
+  const desc = document.getElementById("pNewTabDesc").value.trim();
+  if(!name){ pStatus("Give the tab a name.", false); return; }
+  const id = "t-"+name.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,24) + "-" + Date.now().toString(36).slice(-3);
+  const keywords = auto ? keywordsFrom(desc || name) : keywordsFrom(name);
+  CONFIG.customTabs.push({ id, label: name, description: desc, keywords });
+  rebuildCategories();
+  document.getElementById("pNewTabName").value=""; document.getElementById("pNewTabDesc").value="";
+  renderPanel();
+  // stay in Tab management with the new tab selected in the resources section
+  showPanelView("tabmgmt");
+  document.getElementById("pTab").value = id; renderResList(); renderRemoveAction();
+  markDirty(`Created “${name}”${auto ? " (auto-populating)" : ""}`);
+}
+
+// ---- pins ----
+function togglePin(item, btn){
+  const i = PINS.findIndex(p=>p.id===item.id);
+  const nowPinned = i < 0;
+  if(i>=0) PINS.splice(i,1); else PINS.push({ ...item });
+  try{ localStorage.setItem("tw-pins", JSON.stringify(PINS)); }catch(e){}
+  // Update the clicked button in place — do NOT recompute the view, so the box
+  // stays exactly where it is. The pin persists and takes effect on the next reshuffle.
+  if(btn){ btn.classList.toggle("on", nowPinned); btn.title = nowPinned ? "Unpin" : "Pin"; }
+  renderPins();
+}
+function renderPins(){
+  const el = document.getElementById("pPinList"); if(!el) return;
+  el.innerHTML = PINS.map((p,i)=>{
+    const t = esc((p.title||"").slice(0,30));
+    const link = p.url ? `<a class="pinlink" href="${esc(p.url)}" target="_blank" rel="noopener" title="Open article">${t} ↗</a>` : t;
+    return `<span class="mchip">📌 ${link} <button onclick="unpinAt(${i})" title="Unpin">×</button></span>`;
+  }).join("") || `<span class="phint">No pinned boxes.</span>`;
+}
+function unpinAt(i){ PINS.splice(i,1); try{ localStorage.setItem("tw-pins", JSON.stringify(PINS)); }catch(e){} computeView(); renderWall(); renderPins(); }
+
+// ---- saved (bookmarks) ----
+function toggleSave(item){
+  const i = SAVED.findIndex(p=>p.id===item.id);
+  if(i>=0) SAVED.splice(i,1); else SAVED.unshift({ ...item });
+  try{ localStorage.setItem("tw-saved", JSON.stringify(SAVED)); }catch(e){}
+  updateSavedBtn();
+  if(activeCat==="saved"){ computeView(); renderWall(); }
+  else buildWall(); // refresh the star in place (no layout reshuffle)
+}
+
+// ---- dismiss (quick remove + next box slides in) ----
+function dismissItem(i){
+  const it = visible[i]; if(!it) return;
+  if(!DISMISSED.includes(it.id)) DISMISSED.push(it.id);
+  try{ localStorage.setItem("tw-dismissed", JSON.stringify(DISMISSED.slice(-500))); }catch(e){}
+  // pull the next unseen item into this slot (immediate, no layout reshuffle)
+  const vis = new Set(visible.filter(Boolean).map(x=>x.id));
+  let next=null;
+  for(let k=0;k<view.length;k++){ const c=view[(cursor+k)%view.length]; if(c && !vis.has(c.id) && !DISMISSED.includes(c.id)){ next=c; cursor=(cursor+k+1)%view.length; break; } }
+  view = view.filter(x=>x.id!==it.id);
+  const slot = document.querySelector(`.slot[data-i="${i}"]`);
+  if(next && slot){ visible[i]=next; slot.innerHTML = cardHtml(next, SLOTS[i].size); requestAnimationFrame(()=>fitCard(slot.firstElementChild)); }
+  else if(slot){ visible[i]=null; computeView(); renderWall(); }
+}
+
+// ---- save ----
+async function savePanel(){
+  pStatus("Saving…");
+  try{
+    const r = await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(CONFIG)});
+    const d = await r.json();
+    if(d.ok){ clearDirty(); pStatus("Saved. Rebuilding feed…", true); rebuildCategories(); buildChips(lastCounts); setTimeout(load, 1500); }
+    else pStatus("Save failed: "+(d.error||""), false);
+  }catch(e){ pStatus("Save failed: "+e.message, false); }
+}
+document.getElementById("manageBtn").addEventListener("click", openPanel);
+function updateSavedBtn(){
+  document.getElementById("savedN").textContent = SAVED.length;
+  document.getElementById("savedBtn").classList.toggle("on", activeCat==="saved");
+}
+document.getElementById("savedBtn").addEventListener("click", ()=>{
+  applyFilter(activeCat==="saved" ? "all" : "saved");
+  updateSavedBtn();
+});
+document.getElementById("pAddInput").addEventListener("keydown", e=>{ if(e.key==="Enter") verifyResource(); });
+document.addEventListener("keydown", e=>{ if(e.key==="Escape") closePanel(); });
+
+// ---- font-size control ----
+let FSCALE = 1; try { FSCALE = parseFloat(localStorage.getItem("tw-fscale")) || 1; } catch(e){}
+function applyFont(){ document.documentElement.style.setProperty("--fscale", FSCALE.toFixed(2)); requestAnimationFrame(fitAll); }
+function setFont(dir){
+  FSCALE = Math.min(1.5, Math.max(0.8, +(FSCALE + dir*0.1).toFixed(2)));
+  try { localStorage.setItem("tw-fscale", FSCALE); } catch(e){}
+  applyFont();
+}
+applyFont();
+
+buildSwatches();
+loadConfig().then(load);
+updateSavedBtn();
+setInterval(rotate, 8000);
+setInterval(load, 3*60*1000);
+let fitT; addEventListener("resize", ()=>{ clearTimeout(fitT); fitT=setTimeout(()=>requestAnimationFrame(fitAll), 150); });
+</script>
+</body>
+</html>

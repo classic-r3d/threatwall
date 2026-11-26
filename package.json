@@ -1,0 +1,29 @@
+{
+  "name": "threatwall",
+  "version": "1.0.0",
+  "description": "ThreatWall — a live offensive-security & AI-security news wall that aggregates 30+ sources into an auto-rotating, filterable terminal-style dashboard. Bun + TypeScript, zero dependencies.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun run server.ts",
+    "stop": "lsof -ti tcp:${PORT:-8090} | xargs kill 2>/dev/null || true",
+    "restart": "bun run stop; sleep 1; bun run start",
+    "start:bg": "nohup bun run server.ts > server.log 2>&1 & echo \"started (pid $!), logs -> server.log\"",
+    "seed-yt": "bun run scripts/seed-yt.ts"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "keywords": [
+    "security",
+    "cybersecurity",
+    "offensive-security",
+    "infosec",
+    "dashboard",
+    "news-aggregator",
+    "ai-security",
+    "bun",
+    "typescript"
+  ],
+  "license": "MIT"
+}
