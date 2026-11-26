@@ -1,22 +1,20 @@
 # 🛡️ ThreatWall — Live Threat & News Wall
 
-A dashboard of news related to **offensive-security & AI-security**. It aggregates 30+ live sources — security news, exploit research, CVEs actively exploited in the wild, writeups, YouTube, X/Twitter, GitHub tools, and more — into an auto-rotating terminal-styled dashboard.
+A dashboard of news related to **offensive-security & AI-security**. It aggregates 30+ live sources: security news, exploit research, CVEs actively exploited in the wild, writeups, YouTube, X/Twitter, GitHub tools, and more — into a single dashboard.
 
 > `root@offsec:~# ./threatwall --live`
 
 ![The ThreatWall dashboard in the CYBORG theme — the All tab, a bento wall of CVE, GitHub, writeup and news cards rotating over an animated circuit background](docs/dashboard.gif)
 
-*CYBORG — the `All` tab, every source interleaved. The wall rotates one card every 8 seconds.*
 
-Every card is live. Star to save, `✕` to dismiss, 📌 to pin it to the top of the wall. The tab bar across the top filters by topic; counts update as feeds refresh. Seven themes ship with the app, and each one changes layout, typography, card treatment and the animated background canvas — not just the palette.
 
 ![The AI Security tab in the GHOST theme — dossier-styled cards with FILE // source labels over a sweeping radar background](docs/ghost-aisec.gif)
 
-*GHOST — the `AI Security` tab, 72 items, radar sweeping behind the dossier cards.*
+
 
 ![The YouTube tab in the ONION theme — video cards with thumbnails and channel names over pulsing encrypted relay circuits](docs/onion-youtube.gif)
 
-*ONION — the `YouTube` tab, where cards switch to a thumbnail layout, over pulsing relay circuits.*
+
 
 ---
 
